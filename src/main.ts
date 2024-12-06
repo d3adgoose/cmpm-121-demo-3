@@ -11,8 +11,8 @@ const playerLocation = leaflet.latLng(36.98949379578401, -122.06277128548504);
 // Configuration for game's zoom and tile details
 const GAME_ZOOM_LEVEL = 19;
 const TILE_SIZE = 1e-4;
-const AREA_SIZE = 8;
-const CACHE_CREATION_CHANCE = 0.1;
+const AREA_SIZE = 8; // The number of tiles to consider around the player
+const CACHE_CREATION_CHANCE = 0.1; // Chance of a cache spawning per tile
 
 // Tile interface for position indexing
 interface Position {
@@ -62,14 +62,16 @@ const cacheMarker = leaflet.icon({
 
 // Function to add caches to the map
 function placeCache(pos: Position) {
-  const cacheLat = (pos.row * TILE_SIZE + (pos.row + 1) * TILE_SIZE) / 2;
-  const cacheLng = (pos.col * TILE_SIZE + (pos.col + 1) * TILE_SIZE) / 2;
+  const cacheLat = pos.row * TILE_SIZE + TILE_SIZE / 2;
+  const cacheLng = pos.col * TILE_SIZE + TILE_SIZE / 2;
   const cachePoint = leaflet.latLng(cacheLat, cacheLng);
   const cache = leaflet.marker(cachePoint, { icon: cacheMarker });
   cache.addTo(mapElement);
 
   cache.bindPopup(() => {
-    let cacheCoins = Math.floor(generateLuck([pos.row, pos.col, "initialValue"].toString()) * 100);
+    let cacheCoins = Math.floor(
+      generateLuck([pos.row, pos.col, "initialValue"].toString()) * 100
+    );
     const popupContent = document.createElement("div");
     popupContent.innerHTML = `
       <div>There is a cache here at "${pos.row},${pos.col}". It has <span id="value">${cacheCoins}</span> coins.</div>
@@ -82,10 +84,11 @@ function placeCache(pos: Position) {
           return;
         }
         cacheCoins--;
-        popupContent.querySelector<HTMLSpanElement>("#value")!.innerHTML = cacheCoins.toString();
+        popupContent.querySelector<HTMLSpanElement>("#value")!.innerHTML =
+          cacheCoins.toString();
         score++;
         statusDiv.innerHTML = `${score} coins!`;
-      },
+      }
     );
     popupContent.querySelector<HTMLButtonElement>("#give")!.addEventListener(
       "click",
@@ -94,10 +97,11 @@ function placeCache(pos: Position) {
           return;
         }
         cacheCoins++;
-        popupContent.querySelector<HTMLSpanElement>("#value")!.innerHTML = cacheCoins.toString();
+        popupContent.querySelector<HTMLSpanElement>("#value")!.innerHTML =
+          cacheCoins.toString();
         score--;
         statusDiv.innerHTML = `${score} coins!`;
-      },
+      }
     );
     return popupContent;
   });
@@ -110,12 +114,17 @@ function calculateTileFromLocation(location: { lat: number; lng: number }): Posi
   return { row, col };
 }
 
-// Checking and adding caches in the player's vicinity
-const currentTile = calculateTileFromLocation(playerLocation);
-for (let row = currentTile.row - AREA_SIZE; row < currentTile.row + AREA_SIZE; row++) {
-  for (let col = currentTile.col - AREA_SIZE; col < currentTile.col + AREA_SIZE; col++) {
-    if (generateLuck([row, col].toString()) < CACHE_CREATION_CHANCE) {
-      placeCache({ row, col });
+// Function to check and spawn caches in a nearby area
+function spawnCachesAroundPlayer() {
+  const currentTile = calculateTileFromLocation(playerLocation);
+  for (let row = currentTile.row - AREA_SIZE; row <= currentTile.row + AREA_SIZE; row++) {
+    for (let col = currentTile.col - AREA_SIZE; col <= currentTile.col + AREA_SIZE; col++) {
+      if (Math.random() < CACHE_CREATION_CHANCE) {
+        placeCache({ row, col });
+      }
     }
   }
 }
+
+// Initial cache placement
+spawnCachesAroundPlayer();
