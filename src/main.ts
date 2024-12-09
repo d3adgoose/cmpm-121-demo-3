@@ -1,130 +1,250 @@
-import leaflet from "leaflet";
+import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./leafletWorkaround.ts";
-import generateLuck from "./luck.ts";
-document.title = "Slay";
 
-// Coordinates for the classroom, using Google Maps data
-const playerLocation = leaflet.latLng(36.98949379578401, -122.06277128548504);
+// Constants for the game setup
+const START_LAT = 36.9895;
+const START_LNG = -122.0627;
+const CELL_SIZE = 0.0001; // Size of each grid cell in lat/lng units
+const CACHE_CHANCE = 0.1; // Probability of a cache appearing in a cell
+const VIEW_DISTANCE = 8; // Number of cells visible in each direction
 
-// Configuration for game's zoom and tile details
-const GAME_ZOOM_LEVEL = 19;
-const TILE_SIZE = 1e-4;
-const AREA_SIZE = 8; // The number of tiles to consider around the player
-const CACHE_CREATION_CHANCE = 0.1; // Chance of a cache spawning per tile
+// Type definitions for game objects
+type Position = { lat: number; lng: number };
+type GridCell = { x: number; y: number };
+type Token = { uid: string };
+type GeocacheSpot = { uid: string; pos: Position; tokens: Token[] };
 
-// Tile interface for position indexing
-interface Position {
-  row: number;
-  col: number;
+// Cache to store grid cell calculations for performance
+const gridCache = new Map<string, GridCell>();
+
+// Convert lat/lng coordinates to grid cell coordinates
+function coordsToGrid({ lat, lng }: Position): GridCell {
+  const x = Math.floor(lat / CELL_SIZE);
+  const y = Math.floor(lng / CELL_SIZE);
+  const key = `${x}:${y}`;
+  if (!gridCache.has(key)) {
+    gridCache.set(key, { x, y });
+  }
+  return gridCache.get(key)!;
 }
 
-// Initializing the game map in a div with id "map"
-const mapElement = leaflet.map(document.getElementById("map")!, {
-  center: playerLocation,
-  zoom: GAME_ZOOM_LEVEL,
-  minZoom: GAME_ZOOM_LEVEL,
-  maxZoom: GAME_ZOOM_LEVEL,
-  zoomControl: false,
-  scrollWheelZoom: false,
-  dragging: false,
-  keyboard: false,
-});
+// Explorer class representing the player
+class Explorer {
+  pos: Position;
+  inventory: Token[];
+  discoveredCaches: Set<string>;
 
-// Adding a background tile layer to the map
-leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution:
-    '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-}).addTo(mapElement);
+  constructor(pos: Position) {
+    this.pos = pos;
+    this.inventory = [];
+    this.discoveredCaches = new Set();
+  }
 
-// Configuring the player marker with an icon
-const avatar = leaflet.icon({
-  iconUrl: "/project/src/Girl2.png",
-  tooltipAnchor: [-16, 16],
-});
-const player = leaflet.marker(playerLocation, { icon: avatar });
-player.bindTooltip("That's you!");
-player.addTo(mapElement);
+  // Add a token to the explorer's inventory
+  acquireToken(token: Token, cacheUid: string) {
+    this.inventory.push(token);
+    this.discoveredCaches.add(cacheUid);
+  }
 
-// Managing player's score with in-game coins
-let score = 0;
-const statusDiv = document.querySelector<HTMLDivElement>("#statusPanel")!;
-statusDiv.innerHTML = "Inventory empty. Go out there and get some coins!";
-
-// Cache marker configuration
-const cacheMarker = leaflet.icon({
-  iconUrl: "/project/src/Chest_1.png",
-  tooltipAnchor: [-16, 16],
-  popupAnchor: [16, 16],
-});
-
-// Function to add caches to the map
-function placeCache(pos: Position) {
-  const cacheLat = pos.row * TILE_SIZE + TILE_SIZE / 2;
-  const cacheLng = pos.col * TILE_SIZE + TILE_SIZE / 2;
-  const cachePoint = leaflet.latLng(cacheLat, cacheLng);
-  const cache = leaflet.marker(cachePoint, { icon: cacheMarker });
-  cache.addTo(mapElement);
-
-  cache.bindPopup(() => {
-    let cacheCoins = Math.floor(
-      generateLuck([pos.row, pos.col, "initialValue"].toString()) * 100
-    );
-    const popupContent = document.createElement("div");
-    popupContent.innerHTML = `
-      <div>There is a cache here at "${pos.row},${pos.col}". It has <span id="value">${cacheCoins}</span> coins.</div>
-      <button id="take">Take</button>
-      <button id="give">Deposit</button>`;
-    popupContent.querySelector<HTMLButtonElement>("#take")!.addEventListener(
-      "click",
-      () => {
-        if (cacheCoins <= 0) {
-          return;
-        }
-        cacheCoins--;
-        popupContent.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-          cacheCoins.toString();
-        score++;
-        statusDiv.innerHTML = `${score} coins!`;
-      }
-    );
-    popupContent.querySelector<HTMLButtonElement>("#give")!.addEventListener(
-      "click",
-      () => {
-        if (score <= 0) {
-          return;
-        }
-        cacheCoins++;
-        popupContent.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-          cacheCoins.toString();
-        score--;
-        statusDiv.innerHTML = `${score} coins!`;
-      }
-    );
-    return popupContent;
-  });
-}
-
-// Calculate tile indices from geographical coordinates
-function calculateTileFromLocation(location: { lat: number; lng: number }): Position {
-  const row = Math.floor(location.lat / TILE_SIZE);
-  const col = Math.floor(location.lng / TILE_SIZE);
-  return { row, col };
-}
-
-// Function to check and spawn caches in a nearby area
-function spawnCachesAroundPlayer() {
-  const currentTile = calculateTileFromLocation(playerLocation);
-  for (let row = currentTile.row - AREA_SIZE; row <= currentTile.row + AREA_SIZE; row++) {
-    for (let col = currentTile.col - AREA_SIZE; col <= currentTile.col + AREA_SIZE; col++) {
-      if (Math.random() < CACHE_CREATION_CHANCE) {
-        placeCache({ row, col });
-      }
+  // Place a token from the explorer's inventory into a cache
+  placeToken(cache: GeocacheSpot) {
+    if (this.inventory.length > 0) {
+      const token = this.inventory.pop()!;
+      cache.tokens.push(token);
     }
   }
 }
 
-// Initial cache placement
-spawnCachesAroundPlayer();
+// Create the explorer (player) at the starting position
+const explorer = new Explorer({ lat: START_LAT, lng: START_LNG });
+let geocacheSpots: GeocacheSpot[] = [];
+const cacheRegistry: Map<string, GeocacheSpot> = new Map();
+
+// Main game initialization
+document.addEventListener("DOMContentLoaded", () => {
+  // Create and add the map element to the DOM
+  const mapElement = document.createElement("div");
+  mapElement.id = "map";
+  mapElement.style.width = "100%";
+  mapElement.style.height = "400px";
+  document.body.appendChild(mapElement);
+
+  // Initialize the Leaflet map
+  const map = L.map("map").setView([START_LAT, START_LNG], 16);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(map);
+
+  // Set the path for Leaflet's default icons
+  L.Icon.Default.imagePath = "https://unpkg.com/leaflet@1.7.1/dist/images/";
+
+  // Add the explorer's marker to the map
+  const explorerMarker = L.marker([explorer.pos.lat, explorer.pos.lng])
+    .addTo(map)
+    .bindPopup("You are here!");
+
+  // Generate a pseudo-random number based on a seed
+  function pseudoRandom(seed: number): number {
+    return Math.abs(Math.sin(seed) * 10000) % 1;
+  }
+
+  // Create a geocache at a given grid cell
+  function createGeocache(cell: GridCell): GeocacheSpot | null {
+    if (pseudoRandom(cell.x * VIEW_DISTANCE + cell.y) < CACHE_CHANCE) {
+      const pos: Position = {
+        lat: cell.x * CELL_SIZE,
+        lng: cell.y * CELL_SIZE,
+      };
+      const tokens: Token[] = [];
+      const tokenCount = Math.floor(pseudoRandom(cell.x + cell.y + 1) * 5);
+      for (let serial = 0; serial < tokenCount; serial++) {
+        tokens.push({ uid: `${cell.x}:${cell.y}#${serial}` });
+      }
+      const cache: GeocacheSpot = {
+        uid: `cache_${cell.x}_${cell.y}`,
+        pos,
+        tokens,
+      };
+      cacheRegistry.set(cache.uid, cache);
+      return cache;
+    }
+    return null;
+  }
+
+  // Update the display of the explorer's inventory
+  function updateInventoryDisplay() {
+    const uiPanel = document.getElementById("ui-panel");
+    if (!uiPanel) return;
+
+    const inventoryElement = document.createElement("div");
+    inventoryElement.style.margin = "10px 0";
+    inventoryElement.classList.add("inventory");
+
+    if (explorer.inventory.length > 0) {
+      inventoryElement.classList.add("has-items");
+      inventoryElement.classList.remove("empty");
+      const inventoryContent = `Backpack: ${explorer.inventory.map((token) => token.uid).join(", ")}`;
+      inventoryElement.textContent = inventoryContent;
+    } else {
+      inventoryElement.classList.add("empty");
+      inventoryElement.classList.remove("has-items");
+      inventoryElement.textContent = "Backpack: (empty)";
+    }
+
+    const existingInventory = uiPanel.querySelector(".inventory");
+    if (existingInventory) {
+      existingInventory.replaceWith(inventoryElement);
+    } else {
+      uiPanel.appendChild(inventoryElement);
+    }
+  }
+
+  // Refresh the visible geocaches based on the explorer's position
+  function refreshVisibleCaches() {
+    geocacheSpots = [];
+    const explorerCell = coordsToGrid(explorer.pos);
+
+    for (let i = -VIEW_DISTANCE; i <= VIEW_DISTANCE; i++) {
+      for (let j = -VIEW_DISTANCE; j <= VIEW_DISTANCE; j++) {
+        const cell: GridCell = { x: explorerCell.x + i, y: explorerCell.y + j };
+        const cacheUid = `cache_${cell.x}_${cell.y}`;
+        if (cacheRegistry.has(cacheUid)) {
+          geocacheSpots.push(cacheRegistry.get(cacheUid)!);
+        } else {
+          const newCache = createGeocache(cell);
+          if (newCache) geocacheSpots.push(newCache);
+        }
+      }
+    }
+    updateGeocacheMarkers();
+  }
+
+  // Update the markers on the map for visible geocaches
+  function updateGeocacheMarkers() {
+    // Remove all existing geocache markers
+    map.eachLayer((layer) => {
+      if (layer instanceof L.Marker && layer !== explorerMarker) {
+        map.removeLayer(layer);
+      }
+    });
+
+    // Add markers for all visible geocaches
+    geocacheSpots.forEach((cache) => {
+      const marker = L.marker([cache.pos.lat, cache.pos.lng]).addTo(map);
+
+      marker.bindPopup(`
+        <b>Geocache at (${cache.pos.lat.toFixed(5)}, ${cache.pos.lng.toFixed(5)})</b><br>
+        Tokens: ${cache.tokens.map((token) => token.uid).join(", ")}<br>
+        <div>
+          <button id="acquire-btn-${cache.uid}" class="popup-btn">Acquire Token</button>
+          <button id="place-btn-${cache.uid}" class="popup-btn">Place Token</button>
+        </div>
+      `);
+
+      // Add event listeners to the popup buttons
+      marker.on("popupopen", () => {
+        const acquireBtn = document.getElementById(`acquire-btn-${cache.uid}`);
+        const placeBtn = document.getElementById(`place-btn-${cache.uid}`);
+
+        if (acquireBtn) {
+          acquireBtn.addEventListener("click", () => {
+            acquireToken(cache.uid);
+            refreshVisibleCaches();
+          });
+        }
+
+        if (placeBtn) {
+          placeBtn.addEventListener("click", () => {
+            placeToken(cache.uid);
+            refreshVisibleCaches();
+          });
+        }
+      });
+    });
+  }
+
+  // Acquire a token from a geocache
+  function acquireToken(cacheUid: string) {
+    if (explorer.discoveredCaches.has(cacheUid)) {
+      alert("You've already explored this cache!");
+      return;
+    }
+
+    const cache = geocacheSpots.find((c) => c.uid === cacheUid);
+    if (cache && cache.tokens.length > 0) {
+      const token = cache.tokens.pop()!;
+      explorer.acquireToken(token, cacheUid);
+      alert(`Acquired token: ${token.uid}`);
+      updateInventoryDisplay();
+      updateGeocacheMarkers();
+    }
+  }
+
+  // Place a token into a geocache
+  function placeToken(cacheUid: string) {
+    const cache = geocacheSpots.find((c) => c.uid === cacheUid);
+    if (cache && explorer.inventory.length > 0) {
+      explorer.placeToken(cache);
+      alert(`Placed a token in cache ${cacheUid}`);
+      updateInventoryDisplay();
+      updateGeocacheMarkers();
+    }
+  }
+
+  // Create and add the UI panel to the DOM
+  const uiPanel = document.createElement("div");
+  uiPanel.id = "ui-panel";
+  uiPanel.style.position = "absolute";
+  uiPanel.style.top = "10px";
+  uiPanel.style.left = "10px";
+  uiPanel.style.zIndex = "1000";
+  uiPanel.style.backgroundColor = "white";
+  uiPanel.style.padding = "10px";
+  document.body.appendChild(uiPanel);
+
+  // Initialize the game state
+  refreshVisibleCaches();
+  updateInventoryDisplay();
+});
